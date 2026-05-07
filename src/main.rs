@@ -1779,8 +1779,8 @@ fn run_cli() -> Result<i32> {
                 hooks::init::run_gemini(global, hook_only, patch_mode, cli.verbose)?;
             } else if copilot {
                 hooks::init::run_copilot(cli.verbose)?;
-            } else if agent == Some(AgentTarget::Pi) {
-                hooks::init::run_pi_mode(global, cli.verbose)?;
+            } else if pi || agent == Some(AgentTarget::Pi) {
+                hooks::init::run_pi_mode(global, cli.verbose)?
             } else if agent == Some(AgentTarget::Kilocode) {
                 if global {
                     anyhow::bail!("Kilo Code is project-scoped. Use: rtk init --agent kilocode");
@@ -1820,9 +1820,6 @@ fn run_cli() -> Result<i32> {
                     patch_mode,
                     cli.verbose,
                 )?;
-                if pi {
-                    hooks::init::run_pi_mode(global, cli.verbose)?;
-                }
             }
             0
         }
