@@ -16,6 +16,7 @@ pub fn run(
     max_results: usize,
     context_only: bool,
     file_type: Option<&str>,
+    fixed: bool,
     extra_args: &[String],
     verbose: u8,
 ) -> Result<i32> {
@@ -25,27 +26,14 @@ pub fn run(
         eprintln!("grep: '{}' in {}", pattern, path);
     }
 
-    // Fix: convert BRE alternation \| → | for rg (which uses PCRE-style regex)
-    let rg_pattern = pattern.replace(r"\|", "|");
-
     let mut rg_cmd = resolved_command("rg");
-    // --no-ignore-vcs: match grep -r behavior (don't skip .gitignore'd files).
-    // Without this, rg returns 0 matches for files in .gitignore, causing
-    // false negatives that make AI agents draw wrong conclusions.
-    // Using --no-ignore-vcs (not --no-ignore) so .ignore/.rgignore are still respected.
-    rg_cmd.args(["-n", "--no-heading", "--no-ignore-vcs", &rg_pattern, path]);
-
-    if let Some(ft) = file_type {
-        rg_cmd.arg("--type").arg(ft);
-    }
-
-    for arg in extra_args {
-        // Fix: skip grep-ism -r flag (rg is recursive by default; rg -r means --replace)
-        if arg == "-r" || arg == "--recursive" {
-            continue;
-        }
-        rg_cmd.arg(arg);
-    }
+    rg_cmd.args(build_rg_args(
+        pattern,
+        path,
+        file_type,
+        fixed,
+        extra_args,
+    ));
 
     let result = exec_capture(&mut rg_cmd)
         .or_else(|_| {
@@ -55,6 +43,13 @@ pub fn run(
             exec_capture(&mut grep_cmd)
         })
         .context("grep/rg failed")?;
+
+    if result.exit_code == 2 && !fixed && !result.stderr.trim().is_empty() {
+        let s = result.stderr.to_lowercase();
+        if s.contains("regex parse error") || s.contains("error parsing regex") {
+            eprintln!("rtk grep: regex parse error (hint: try `rtk grep --fixed ...`)");
+        }
+    }
 
     // Passthrough output flags that produce output that is already small.
     if has_format_flag(extra_args) {
@@ -164,6 +159,50 @@ pub fn run(
     );
 
     Ok(exit_code)
+}
+
+fn build_rg_args(
+    pattern: &str,
+    path: &str,
+    file_type: Option<&str>,
+    fixed: bool,
+    extra_args: &[String],
+) -> Vec<String> {
+    // Regex mode: convert BRE alternation \| → | for rg (which uses PCRE-style regex)
+    let rg_pattern = if fixed {
+        pattern.to_string()
+    } else {
+        pattern.replace(r"\|", "|")
+    };
+
+    // --no-ignore-vcs: match grep -r behavior (don't skip .gitignore'd files).
+    // Without this, rg returns 0 matches for files in .gitignore, causing
+    // false negatives that make AI agents draw wrong conclusions.
+    // Using --no-ignore-vcs (not --no-ignore) so .ignore/.rgignore are still respected.
+    let mut args = vec![
+        "-n".to_string(),
+        "--no-heading".to_string(),
+        "--no-ignore-vcs".to_string(),
+    ];
+    if fixed {
+        args.push("-F".to_string());
+    }
+    if let Some(ft) = file_type {
+        args.push("--type".to_string());
+        args.push(ft.to_string());
+    }
+    args.push(rg_pattern);
+    args.push(path.to_string());
+
+    for arg in extra_args {
+        // Fix: skip grep-ism -r flag (rg is recursive by default; rg -r means --replace)
+        if arg == "-r" || arg == "--recursive" {
+            continue;
+        }
+        args.push(arg.clone());
+    }
+
+    args
 }
 
 fn has_format_flag(extra_args: &[String]) -> bool {
@@ -294,8 +333,24 @@ mod tests {
     #[test]
     fn test_bre_alternation_translated() {
         let pattern = r"fn foo\|pub.*bar";
-        let rg_pattern = pattern.replace(r"\|", "|");
-        assert_eq!(rg_pattern, "fn foo|pub.*bar");
+        let args = build_rg_args(pattern, ".", None, false, &[]);
+        assert!(args.iter().any(|a| a == "fn foo|pub.*bar"));
+    }
+
+    #[test]
+    fn test_fixed_grep_includes_dash_f_and_keeps_parens_literal() {
+        let pattern = "memcpy(szDummy";
+        let args = build_rg_args(pattern, ".", None, true, &[]);
+        assert!(args.iter().any(|a| a == "-F"));
+        assert!(args.iter().any(|a| a == pattern));
+    }
+
+    #[test]
+    fn test_fixed_grep_cpp_symbol_literal() {
+        let pattern = "AgcmUICharacter::OnAddModule";
+        let args = build_rg_args(pattern, ".", None, true, &[]);
+        assert!(args.iter().any(|a| a == "-F"));
+        assert!(args.iter().any(|a| a == pattern));
     }
 
     // Fix: -r flag (grep recursive) is stripped from extra_args (rg is recursive by default)
