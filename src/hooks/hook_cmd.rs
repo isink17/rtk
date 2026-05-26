@@ -180,19 +180,24 @@ fn copilot_cli_response_for_verdict(
     }
     let rewritten = get_rewritten(cmd)?;
     audit_log("rewrite", cmd, &rewritten);
-    let decision = match verdict {
-        PermissionVerdict::Allow => "allow",
-        _ => "ask",
-    };
+
     let mut modified = args.clone();
     if let Some(obj) = modified.as_object_mut() {
         obj.insert("command".into(), Value::String(rewritten));
     }
-    Some(json!({
-        "permissionDecision": decision,
+
+    // Copilot CLI v1.0.54 only applies `modifiedArgs` when permissionDecision is
+    // either "allow" or absent. Omitting permissionDecision lets Copilot's normal
+    // permission flow run on the rewritten command — `rtk *` is not on its
+    // auto-allow list, so the user sees a prompt for the rewritten command.
+    let mut response = json!({
         "permissionDecisionReason": "RTK auto-rewrite",
-        "modifiedArgs": modified
-    }))
+        "modifiedArgs": modified,
+    });
+    if verdict == PermissionVerdict::Allow {
+        response["permissionDecision"] = json!("allow");
+    }
+    Some(response)
 }
 
 // ── Gemini hook ───────────────────────────────────────────────
@@ -644,16 +649,16 @@ mod tests {
     }
 
     #[test]
-    fn test_copilot_cli_default_verdict_returns_ask_with_rewrite() {
+    fn test_copilot_cli_default_verdict_omits_permission_decision() {
         let r = copilot_cli_response_for_verdict(
             "cargo test",
             &cli_args("cargo test"),
             PermissionVerdict::Default,
         )
         .unwrap();
-        assert_eq!(
-            r["permissionDecision"], "ask",
-            "Default must be 'ask' so the user is still prompted for the rewritten command"
+        assert!(
+            r.get("permissionDecision").is_none(),
+            "Default must NOT set permissionDecision — Copilot then runs its normal prompt flow on the rewritten command"
         );
         assert_eq!(r["modifiedArgs"]["command"], "rtk cargo test");
     }
