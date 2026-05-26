@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use tempfile::NamedTempFile;
 
 use crate::hooks::constants::{
-    CONFIG_DIR, COPILOT_HOOK_FILE, COPILOT_INSTRUCTIONS_FILE, CURSOR_DIR, GEMINI_DIR, GITHUB_DIR,
-    OPENCODE_PLUGIN_FILE, OPENCODE_SUBDIR, PLUGIN_SUBDIR,
+    CONFIG_DIR, COPILOT_HOME_ENV, COPILOT_HOOK_FILE, COPILOT_INSTRUCTIONS_FILE, COPILOT_USER_DIR,
+    CURSOR_DIR, GEMINI_DIR, GITHUB_DIR, OPENCODE_PLUGIN_FILE, OPENCODE_SUBDIR, PLUGIN_SUBDIR,
 };
 
 use super::constants::{
@@ -4028,6 +4028,98 @@ fn uninstall_copilot_at(base: &Path, ctx: InitContext) -> Result<Vec<String>> {
     Ok(removed)
 }
 
+fn copilot_user_dir() -> Result<PathBuf> {
+    if let Ok(custom) = std::env::var(COPILOT_HOME_ENV) {
+        return Ok(PathBuf::from(custom));
+    }
+    let home = dirs::home_dir().context("could not determine home directory")?;
+    Ok(home.join(COPILOT_USER_DIR))
+}
+
+pub fn run_copilot_global(ctx: InitContext) -> Result<()> {
+    let copilot_dir = copilot_user_dir()?;
+    run_copilot_global_at(&copilot_dir, ctx)
+}
+
+fn run_copilot_global_at(copilot_dir: &Path, ctx: InitContext) -> Result<()> {
+    let InitContext { dry_run, .. } = ctx;
+    let hooks_dir = copilot_dir.join(HOOKS_SUBDIR);
+
+    if !dry_run {
+        fs::create_dir_all(&hooks_dir)
+            .with_context(|| format!("Failed to create {} directory", hooks_dir.display()))?;
+    }
+
+    let hook_path = hooks_dir.join(COPILOT_HOOK_FILE);
+    write_if_changed(
+        &hook_path,
+        COPILOT_HOOK_JSON,
+        "Copilot global hook config",
+        ctx,
+    )?;
+
+    if dry_run {
+        print_dry_run_footer();
+    } else {
+        println!("\nGitHub Copilot global integration installed (user-scoped).\n");
+        println!("  Hook config:    {}", hook_path.display());
+        println!("\n  Applies to all Copilot CLI sessions on this machine.");
+        println!("  Restart your Copilot CLI session to activate.\n");
+    }
+
+    Ok(())
+}
+
+pub fn uninstall_copilot_global(ctx: InitContext) -> Result<()> {
+    let copilot_dir = copilot_user_dir()?;
+    let InitContext { dry_run, .. } = ctx;
+    let removed = uninstall_copilot_global_at(&copilot_dir, ctx)?;
+
+    if removed.is_empty() {
+        println!("RTK global Copilot support was not installed (nothing to remove)");
+    } else {
+        let header = if dry_run {
+            "[dry-run] would uninstall RTK (global GitHub Copilot):"
+        } else {
+            "RTK uninstalled (global GitHub Copilot):"
+        };
+        println!("{}", header);
+        for item in &removed {
+            println!("  - {}", item);
+        }
+        if !dry_run {
+            println!("\nRestart your Copilot CLI session to apply changes.");
+        }
+    }
+
+    if dry_run {
+        print_dry_run_footer();
+    }
+    Ok(())
+}
+
+fn uninstall_copilot_global_at(copilot_dir: &Path, ctx: InitContext) -> Result<Vec<String>> {
+    let InitContext { dry_run, .. } = ctx;
+    let hook_path = copilot_dir.join(HOOKS_SUBDIR).join(COPILOT_HOOK_FILE);
+    let mut removed = Vec::new();
+
+    if hook_path.exists() {
+        if dry_run {
+            println!(
+                "[dry-run] would remove hook config: {}",
+                hook_path.display()
+            );
+        } else {
+            // nosemgrep: filesystem-deletion -- Copilot global uninstall removes only the RTK-managed hook config.
+            fs::remove_file(&hook_path)
+                .with_context(|| format!("Failed to remove hook: {}", hook_path.display()))?;
+        }
+        removed.push(format!("Hook config: {}", hook_path.display()));
+    }
+
+    Ok(removed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6491,6 +6583,90 @@ mod tests {
             !hooks_dir.join("rtk-rewrite.json").exists(),
             "rtk's own hook must still be removed"
         );
+    }
+
+    #[test]
+    fn test_copilot_global_install_writes_hook() {
+        let temp = TempDir::new().unwrap();
+        run_copilot_global_at(temp.path(), InitContext::default()).unwrap();
+
+        let hook_path = temp.path().join("hooks").join("rtk-rewrite.json");
+        assert!(hook_path.exists());
+        let v: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&hook_path).unwrap()).unwrap();
+        assert_eq!(v["version"], 1);
+        assert_eq!(v["hooks"]["PreToolUse"][0]["command"], "rtk hook copilot");
+        assert_eq!(v["hooks"]["preToolUse"][0]["bash"], "rtk hook copilot");
+    }
+
+    #[test]
+    fn test_copilot_global_install_does_not_write_instructions() {
+        let temp = TempDir::new().unwrap();
+        run_copilot_global_at(temp.path(), InitContext::default()).unwrap();
+        assert!(
+            !temp.path().join(COPILOT_INSTRUCTIONS_FILE).exists(),
+            "global install must not create a user-level instructions file (undocumented path)"
+        );
+    }
+
+    #[test]
+    fn test_copilot_global_uninstall_removes_hook() {
+        let temp = TempDir::new().unwrap();
+        run_copilot_global_at(temp.path(), InitContext::default()).unwrap();
+        let hook_path = temp.path().join("hooks").join("rtk-rewrite.json");
+        assert!(hook_path.exists());
+
+        let removed = uninstall_copilot_global_at(temp.path(), InitContext::default()).unwrap();
+        assert!(!removed.is_empty());
+        assert!(!hook_path.exists());
+    }
+
+    #[test]
+    fn test_copilot_global_uninstall_nothing_when_absent() {
+        let temp = TempDir::new().unwrap();
+        let removed = uninstall_copilot_global_at(temp.path(), InitContext::default()).unwrap();
+        assert!(removed.is_empty());
+    }
+
+    #[test]
+    fn test_copilot_global_install_does_not_touch_other_hooks() {
+        let temp = TempDir::new().unwrap();
+        let hooks_dir = temp.path().join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        let other = hooks_dir.join("notification-hooks.json");
+        let payload = r#"{"version":1,"hooks":{"agentStop":[{"type":"command","bash":"true"}]}}"#;
+        fs::write(&other, payload).unwrap();
+
+        run_copilot_global_at(temp.path(), InitContext::default()).unwrap();
+
+        assert_eq!(fs::read_to_string(&other).unwrap(), payload);
+    }
+
+    #[test]
+    fn test_copilot_global_uninstall_does_not_touch_other_hooks() {
+        let temp = TempDir::new().unwrap();
+        run_copilot_global_at(temp.path(), InitContext::default()).unwrap();
+        let hooks_dir = temp.path().join("hooks");
+        let other = hooks_dir.join("notification-hooks.json");
+        let payload = r#"{"version":1,"hooks":{"agentStop":[{"type":"command","bash":"true"}]}}"#;
+        fs::write(&other, payload).unwrap();
+
+        uninstall_copilot_global_at(temp.path(), InitContext::default()).unwrap();
+
+        assert!(other.exists());
+        assert_eq!(fs::read_to_string(&other).unwrap(), payload);
+        assert!(!hooks_dir.join("rtk-rewrite.json").exists());
+    }
+
+    #[test]
+    fn test_copilot_global_install_dry_run_writes_nothing() {
+        let temp = TempDir::new().unwrap();
+        let ctx = InitContext {
+            verbose: 0,
+            dry_run: true,
+        };
+        run_copilot_global_at(temp.path(), ctx).unwrap();
+        assert!(!temp.path().join("hooks").join("rtk-rewrite.json").exists());
     }
 
     #[test]

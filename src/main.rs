@@ -1822,7 +1822,11 @@ fn run_cli() -> Result<i32> {
             if show {
                 hooks::init::show_config(codex)?;
             } else if uninstall && copilot {
-                hooks::init::uninstall_copilot(ctx)?;
+                if global {
+                    hooks::init::uninstall_copilot_global(ctx)?;
+                } else {
+                    hooks::init::uninstall_copilot(ctx)?;
+                }
             } else if uninstall {
                 uninstall_init_dispatch(
                     agent,
@@ -1843,7 +1847,11 @@ fn run_cli() -> Result<i32> {
                 };
                 hooks::init::run_gemini(global, hook_only, patch_mode, ctx)?;
             } else if copilot {
-                hooks::init::run_copilot(ctx)?;
+                if global {
+                    hooks::init::run_copilot_global(ctx)?;
+                } else {
+                    hooks::init::run_copilot(ctx)?;
+                }
             } else if agent == Some(AgentTarget::Pi) {
                 hooks::init::run_pi_mode(global, ctx)?
             } else if agent == Some(AgentTarget::Kilocode) {

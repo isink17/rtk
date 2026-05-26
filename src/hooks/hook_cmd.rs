@@ -31,7 +31,7 @@ fn read_stdin_limited() -> Result<String> {
 enum HookFormat {
     /// VS Code Copilot Chat / Claude Code: `tool_name` + `tool_input.command`, supports `updatedInput`.
     VsCode { command: String },
-    /// GitHub Copilot CLI: camelCase `toolName` + `toolArgs` (JSON string), deny-with-suggestion only.
+    /// GitHub Copilot CLI: camelCase `toolName` + `toolArgs` (JSON string), supports `modifiedArgs` for transparent rewrite.
     CopilotCli { command: String },
     /// Non-bash tool, already uses rtk, or unknown format — pass through silently.
     PassThrough,
@@ -156,27 +156,24 @@ fn handle_vscode(cmd: &str) -> Result<()> {
 }
 
 fn handle_copilot_cli(cmd: &str) -> Result<()> {
+    if let Some(response) = copilot_cli_response(cmd) {
+        let _ = writeln!(io::stdout(), "{response}");
+    }
+    Ok(())
+}
+
+fn copilot_cli_response(cmd: &str) -> Option<Value> {
     if permissions::check_command(cmd) == PermissionVerdict::Deny {
         audit_log("deny", cmd, "");
-        return Ok(());
+        return None;
     }
-
-    let rewritten = match get_rewritten(cmd) {
-        Some(r) => r,
-        None => return Ok(()),
-    };
-
+    let rewritten = get_rewritten(cmd)?;
     audit_log("rewrite", cmd, &rewritten);
-
-    let output = json!({
-        "permissionDecision": "deny",
-        "permissionDecisionReason": format!(
-            "Token savings: use `{}` instead (rtk saves 60-90% tokens)",
-            rewritten
-        )
-    });
-    let _ = writeln!(io::stdout(), "{output}");
-    Ok(())
+    Some(json!({
+        "permissionDecision": "allow",
+        "permissionDecisionReason": "RTK auto-rewrite",
+        "modifiedArgs": { "command": rewritten }
+    }))
 }
 
 // ── Gemini hook ───────────────────────────────────────────────
@@ -619,6 +616,39 @@ mod tests {
     #[test]
     fn test_get_rewritten_heredoc() {
         assert!(get_rewritten("cat <<'EOF'\nhello\nEOF").is_none());
+    }
+
+    // --- Copilot CLI handler: transparent rewrite via modifiedArgs ---
+
+    #[test]
+    fn test_copilot_cli_transparent_rewrite() {
+        let r = copilot_cli_response("cargo test").unwrap();
+        assert_eq!(r["permissionDecision"], "allow");
+        assert_eq!(r["modifiedArgs"]["command"], "rtk cargo test");
+    }
+
+    #[test]
+    fn test_copilot_cli_passthrough_unsupported() {
+        assert!(copilot_cli_response("htop").is_none());
+    }
+
+    #[test]
+    fn test_copilot_cli_passthrough_already_rtk() {
+        assert!(copilot_cli_response("rtk cargo test").is_none());
+    }
+
+    #[test]
+    fn test_copilot_cli_passthrough_heredoc() {
+        assert!(copilot_cli_response("cat <<EOF\nhi\nEOF").is_none());
+    }
+
+    #[test]
+    fn test_copilot_cli_preserves_env_prefix() {
+        let r = copilot_cli_response("RUST_LOG=debug cargo test").unwrap();
+        assert_eq!(
+            r["modifiedArgs"]["command"],
+            "RUST_LOG=debug rtk cargo test"
+        );
     }
 
     // --- Gemini format ---

@@ -30,7 +30,7 @@ Agent runs "cargo test"
 |-------|-----------------|---------------------------|
 | Claude Code | Shell hook (`PreToolUse`) | Yes |
 | VS Code Copilot Chat | Shell hook (`PreToolUse`) | Yes |
-| GitHub Copilot CLI | Shell hook (deny-with-suggestion) | No (agent retries) |
+| GitHub Copilot CLI | Shell hook (`preToolUse` `modifiedArgs`) | Yes |
 | Cursor | Shell hook (`preToolUse`) | Yes |
 | Gemini CLI | Rust binary (`BeforeTool`) | Yes |
 | OpenCode | TypeScript plugin (`tool.execute.before`) | Yes |
@@ -69,18 +69,20 @@ Restart Cursor. The hook uses `preToolUse` with Cursor's `updated_input` format.
 ### GitHub Copilot (VS Code Chat + CLI)
 
 ```bash
-rtk init --copilot
+rtk init --copilot            # project-scoped (.github/hooks/)
+rtk init --global --copilot   # user-scoped (~/.copilot/hooks/, respects $COPILOT_HOME)
 ```
 
-Writes one `.github/hooks/rtk-rewrite.json` serving both hosts: VS Code Copilot Chat reads its `PreToolUse` entry (transparent rewrite), GitHub Copilot CLI reads its `preToolUse` entry (deny-with-suggestion; the agent retries with `rtk`).
+Project-scoped writes `.github/hooks/rtk-rewrite.json` (both hosts get transparent rewrite — VS Code Chat via `updatedInput`, Copilot CLI via `modifiedArgs`) plus the RTK block in `.github/copilot-instructions.md`. User-scoped writes only `~/.copilot/hooks/rtk-rewrite.json` — the Copilot CLI docs define no user-level instructions file.
 
-Uninstall (project-scoped):
+Uninstall:
 
 ```bash
 rtk init --uninstall --copilot
+rtk init --uninstall --global --copilot
 ```
 
-Removes `.github/hooks/rtk-rewrite.json` and the RTK block from `.github/copilot-instructions.md` (your own content is preserved).
+Removes only RTK's hook file (and, for project, the RTK block in `copilot-instructions.md`). Other files in `.github/hooks/` or `~/.copilot/hooks/` and your own instruction content are untouched.
 
 ### Gemini CLI
 
