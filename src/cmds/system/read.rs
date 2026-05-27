@@ -288,13 +288,14 @@ fn looks_binary_bytes(bytes: &[u8]) -> bool {
     if bytes.len() >= 2 && ((bytes[0] == 0xFF && bytes[1] == 0xFE) || (bytes[0] == 0xFE && bytes[1] == 0xFF)) {
         return false;
     }
-    let sample = bytes.iter().take(8192).copied().collect::<Vec<u8>>();
+    let len = std::cmp::min(bytes.len(), 8192);
+    let sample = &bytes[..len];
     if sample.is_empty() {
         return false;
     }
 
     // UTF-16 without BOM can contain many NULs; don't treat it as binary.
-    if looks_utf16_no_bom(&sample) {
+    if looks_utf16_no_bom(sample) {
         return false;
     }
 
@@ -305,7 +306,7 @@ fn looks_binary_bytes(bytes: &[u8]) -> bool {
 
     // If a large fraction of bytes are control chars (excluding \t,\n,\r), treat as binary-ish.
     let mut control = 0usize;
-    for b in &sample {
+    for b in sample {
         if *b < 0x09 || (*b > 0x0D && *b < 0x20) {
             control += 1;
         }
@@ -314,7 +315,8 @@ fn looks_binary_bytes(bytes: &[u8]) -> bool {
 }
 
 fn looks_utf16_no_bom(sample: &[u8]) -> bool {
-    if sample.len() < 4 || !sample.len().is_multiple_of(2) {
+    #[allow(clippy::manual_is_multiple_of)]
+    if sample.len() < 4 || sample.len() % 2 != 0 {
         return false;
     }
     let mut zeros_even = 0usize;

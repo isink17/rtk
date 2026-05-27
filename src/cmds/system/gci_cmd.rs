@@ -172,7 +172,9 @@ fn format_system_time(t: SystemTime) -> String {
 }
 
 fn glob_match(pattern: &str, name: &str) -> bool {
-    glob_match_inner(pattern.as_bytes(), name.as_bytes())
+    let pat = pattern.to_ascii_lowercase();
+    let nm = name.to_ascii_lowercase();
+    glob_match_inner(pat.as_bytes(), nm.as_bytes())
 }
 
 fn glob_match_inner(pat: &[u8], name: &[u8]) -> bool {
@@ -185,5 +187,23 @@ fn glob_match_inner(pat: &[u8], name: &[u8]) -> bool {
         (Some(b'?'), Some(_)) => glob_match_inner(&pat[1..], &name[1..]),
         (Some(&p), Some(&n)) if p == n => glob_match_inner(&pat[1..], &name[1..]),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_glob_match_case_insensitive() {
+        assert!(glob_match("*.CPP", "api_win.cpp"));
+        assert!(glob_match("API_WIN.OBJ", "api_win.obj"));
+    }
+
+    #[test]
+    fn test_glob_match_wildcards() {
+        assert!(glob_match("a?c.txt", "abc.txt"));
+        assert!(glob_match("a*c.txt", "abbbbbc.txt"));
+        assert!(!glob_match("a?c.txt", "ac.txt"));
     }
 }

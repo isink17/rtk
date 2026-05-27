@@ -158,7 +158,8 @@ struct Utf16Guess {
 }
 
 fn detect_utf16_no_bom(payload: &[u8]) -> Option<Utf16Guess> {
-    if payload.len() < 4 || !payload.len().is_multiple_of(2) {
+    #[allow(clippy::manual_is_multiple_of)]
+    if payload.len() < 4 || payload.len() % 2 != 0 {
         return None;
     }
 

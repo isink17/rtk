@@ -8,6 +8,7 @@ use crate::core::utils::resolved_command;
 use anyhow::Result;
 use lazy_static::lazy_static;
 use regex::Regex;
+use std::collections::HashSet;
 
 lazy_static! {
     // Compiler: file(line): error|warning C1234: message [project.vcxproj]
@@ -31,7 +32,6 @@ lazy_static! {
     .unwrap();
     static ref MSB3073_RE: Regex = Regex::new(r"(?i)\b(MSB3073|MSB3721)\b").unwrap();
     static ref EXIT_CODE_RE: Regex = Regex::new(r"(?i)\bexited with code\s+(\d+)\b").unwrap();
-    static ref COMMAND_QUOTED_RE: Regex = Regex::new(r#"(?i)\bcommand\s+\"([^\"]+)\""#).unwrap();
     static ref PROJECT_ON_NODE_RE: Regex =
         Regex::new(r#"^Project \"(.+?)\" on node \d+ \((.+?) target\(s\)\)\."#).unwrap();
     static ref DONE_BUILDING_RE: Regex =
@@ -293,10 +293,8 @@ fn parse_diag_line(line: &str, idx: usize, current_project: Option<&str>) -> Opt
                 .captures(&msg)
                 .and_then(|c| c.get(1))
                 .map(|m| m.as_str().to_string());
-            if let Some(cmd_caps) = COMMAND_QUOTED_RE.captures(&msg) {
-                if let Some(cmd) = cmd_caps.get(1).map(|m| m.as_str()) {
-                    msg = cmd.to_string();
-                }
+            if let Some(cmd) = extract_msb3073_command(&msg) {
+                msg = cmd;
             }
             if let Some(n) = exit_code {
                 msg = format!("{} (exit code {})", msg, n);
@@ -373,10 +371,8 @@ fn parse_diag_line(line: &str, idx: usize, current_project: Option<&str>) -> Opt
             .captures(&msg)
             .and_then(|c| c.get(1))
             .map(|m| m.as_str().to_string());
-        if let Some(cmd_caps) = COMMAND_QUOTED_RE.captures(line) {
-            if let Some(cmd) = cmd_caps.get(1).map(|m| m.as_str()) {
-                msg = cmd.to_string();
-            }
+        if let Some(cmd) = extract_msb3073_command(line) {
+            msg = cmd;
         }
         if let Some(n) = exit_code {
             msg = format!("{} (exit code {})", msg, n);
@@ -397,19 +393,67 @@ fn parse_diag_line(line: &str, idx: usize, current_project: Option<&str>) -> Opt
     None
 }
 
+fn extract_msb3073_command(msg: &str) -> Option<String> {
+    // Expected shape:
+    //   The command "...." exited with code N.
+    // Command body may contain escaped quotes: \"C:\path with spaces\"
+    let start = msg.find("The command \"")? + "The command \"".len();
+    let rest = &msg[start..];
+    let mut out = String::new();
+    let mut escape = false;
+    for (i, ch) in rest.char_indices() {
+        if escape {
+            out.push(ch);
+            escape = false;
+            continue;
+        }
+
+        if ch == '\\' {
+            // Only treat backslash as an escape marker when it escapes a quote or a backslash.
+            // Otherwise it's a real Windows path separator.
+            let next = rest[i + ch.len_utf8()..].chars().next();
+            if matches!(next, Some('"') | Some('\\')) {
+                escape = true;
+            } else {
+                out.push(ch);
+            }
+            continue;
+        }
+
+        if ch == '"' {
+            let after = &rest[i + ch.len_utf8()..];
+            if after.starts_with(" exited with code") {
+                break;
+            }
+            out.push(ch);
+            continue;
+        }
+
+        out.push(ch);
+    }
+    if out.is_empty() {
+        return None;
+    }
+
+    // Normalize MSBuild escaping so paths are readable.
+    // Keep this minimal: this is display output only.
+    let out = out.replace(r#"\""#, r#"""#);
+    Some(out)
+}
+
 fn first_real_error(diags: &[MsbuildDiag]) -> Option<MsbuildDiag> {
     diags.iter().find(|d| d.severity == Severity::Error).cloned()
 }
 
 fn dedup_diags(diags: &[MsbuildDiag]) -> Vec<MsbuildDiag> {
     let mut out: Vec<MsbuildDiag> = Vec::new();
-    let mut seen: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
     for d in diags {
         let key = format!("{}|{}", d.code, d.raw);
         if seen.contains(&key) {
             continue;
         }
-        seen.push(key);
+        seen.insert(key);
         out.push(d.clone());
     }
     out
@@ -631,6 +675,8 @@ mod tests {
         assert!(out.contains("MSB3073"));
         assert!(out.contains("exit code 1"));
         assert!(out.contains("copy /Y"));
+        assert!(out.contains("C:\\path with spaces\\out.dll"));
+        assert!(out.contains("C:\\dest\\bin"));
         assert!(out.contains("FIRST_ERROR"));
     }
 

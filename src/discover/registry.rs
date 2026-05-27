@@ -897,7 +897,7 @@ fn try_rewrite_powershell_get_child_item(cmd: &str) -> Option<String> {
         return None;
     }
 
-    let mut tokens: Vec<&str> = cmd.split_whitespace().collect();
+    let mut tokens: Vec<String> = split_powershell_args_quote_aware(cmd)?;
     if tokens.is_empty() {
         return None;
     }
@@ -905,20 +905,20 @@ fn try_rewrite_powershell_get_child_item(cmd: &str) -> Option<String> {
     // Drop the leading command word (Get-ChildItem/gci/dir)
     tokens.remove(0);
 
-    let mut path: Option<&str> = None;
+    let mut path: Option<String> = None;
     let mut recurse = false;
     let mut force = false;
     let mut kind_file = false;
     let mut kind_dir = false;
-    let mut filter: Option<&str> = None;
-    let mut include: Option<&str> = None;
+    let mut filter: Option<String> = None;
+    let mut include: Option<String> = None;
 
     let mut i = 0;
     while i < tokens.len() {
-        let t = tokens[i];
+        let t = tokens[i].as_str();
         let lower = t.to_ascii_lowercase();
         if !t.starts_with('-') && path.is_none() {
-            path = Some(t);
+            path = Some(tokens[i].clone());
             i += 1;
             continue;
         }
@@ -940,11 +940,11 @@ fn try_rewrite_powershell_get_child_item(cmd: &str) -> Option<String> {
                 i += 1;
             }
             "-filter" => {
-                filter = tokens.get(i + 1).copied();
+                filter = tokens.get(i + 1).cloned();
                 i += 2;
             }
             "-include" => {
-                include = tokens.get(i + 1).copied();
+                include = tokens.get(i + 1).cloned();
                 i += 2;
             }
             _ => {
@@ -956,7 +956,7 @@ fn try_rewrite_powershell_get_child_item(cmd: &str) -> Option<String> {
 
     let mut out = String::new();
     out.push_str("rtk gci ");
-    out.push_str(path.unwrap_or("."));
+    out.push_str(path.as_deref().unwrap_or("."));
     if recurse {
         out.push_str(" --recurse");
     }
@@ -970,11 +970,65 @@ fn try_rewrite_powershell_get_child_item(cmd: &str) -> Option<String> {
     }
     if let Some(f) = filter {
         out.push_str(" --filter ");
-        out.push_str(f);
+        out.push_str(&f);
     }
     if let Some(inc) = include {
         out.push_str(" --include ");
-        out.push_str(inc);
+        out.push_str(&inc);
+    }
+    Some(out)
+}
+
+fn split_powershell_args_quote_aware(cmd: &str) -> Option<Vec<String>> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    let mut escape = false;
+
+    for ch in cmd.chars() {
+        if escape {
+            cur.push(ch);
+            escape = false;
+            continue;
+        }
+
+        if quote == Some('"') && ch == '\\' {
+            // Treat backslash-escaped chars inside double quotes as literal.
+            escape = true;
+            cur.push(ch);
+            continue;
+        }
+
+        if let Some(q) = quote {
+            cur.push(ch);
+            if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+
+        if ch == '"' || ch == '\'' {
+            quote = Some(ch);
+            cur.push(ch);
+            continue;
+        }
+
+        if ch.is_whitespace() {
+            if !cur.is_empty() {
+                out.push(cur.clone());
+                cur.clear();
+            }
+            continue;
+        }
+
+        cur.push(ch);
+    }
+
+    if quote.is_some() {
+        return None;
+    }
+    if !cur.is_empty() {
+        out.push(cur);
     }
     Some(out)
 }
@@ -1562,6 +1616,25 @@ mod tests {
         assert_eq!(
             rewrite_command_no_prefixes("Get-ChildItem . -Recurse -File -Filter API_win.obj", &[]),
             Some("rtk gci . --recurse --file --filter API_win.obj".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_powershell_get_child_item_quoted_path_and_filter() {
+        assert_eq!(
+            rewrite_command_no_prefixes(
+                "Get-ChildItem \"C:\\My Path\" -Recurse -File -Filter \"API win.obj\"",
+                &[]
+            ),
+            Some("rtk gci \"C:\\My Path\" --recurse --file --filter \"API win.obj\"".into())
+        );
+    }
+
+    #[test]
+    fn test_rewrite_powershell_get_child_item_quoted_glob_filter() {
+        assert_eq!(
+            rewrite_command_no_prefixes("Get-ChildItem . -Filter \"*.CPP\"", &[]),
+            Some("rtk gci . --filter \"*.CPP\"".into())
         );
     }
 
