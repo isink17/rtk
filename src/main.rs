@@ -21,8 +21,8 @@ use cmds::python::{mypy_cmd, pip_cmd, pytest_cmd, ruff_cmd};
 use cmds::ruby::{rake_cmd, rspec_cmd, rubocop_cmd};
 use cmds::rust::{cargo_cmd, runner};
 use cmds::system::{
-    deps, env_cmd, find_cmd, format_cmd, grep_cmd, json_cmd, local_llm, log_cmd, ls, pipe_cmd,
-    patch, read, summary, tree, wc_cmd,
+    deps, env_cmd, find_cmd, format_cmd, grep_cmd, json_cmd, local_llm, log_cmd, ls, patch,
+    pipe_cmd, read, summary, tree, wc_cmd,
 };
 
 use anyhow::{Context, Result};
@@ -1599,7 +1599,11 @@ fn run_cli() -> Result<i32> {
             let line_range = match line_range {
                 Ok(v) => v,
                 Err(e) => {
-                    eprintln!("rtk read: invalid --lines '{}': {}", lines.unwrap_or_default(), e);
+                    eprintln!(
+                        "rtk read: invalid --lines '{}': {}",
+                        lines.unwrap_or_default(),
+                        e
+                    );
                     return Ok(2);
                 }
             };
