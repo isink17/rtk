@@ -345,6 +345,25 @@ mod tests {
     }
 
     #[test]
+    fn test_analyze_logs_does_not_truncate_when_under_char_limit_but_over_byte_limit() {
+        let msg = "界".repeat(70); // keep total line <= 100 chars, but >100 bytes
+        let line = format!("2024-01-01 10:00:00 ERROR: {msg}");
+        let logs = format!("{line}\n");
+        let result = analyze_logs(&logs);
+        assert!(result.contains(&line));
+    }
+
+    #[test]
+    fn test_analyze_logs_truncates_when_over_char_limit() {
+        let msg = "a".repeat(101);
+        let line = format!("2024-01-01 10:00:00 ERROR: {msg}");
+        let logs = format!("{line}\n");
+        let result = analyze_logs(&logs);
+        let expected_prefix: String = line.chars().take(97).collect();
+        assert!(result.contains(&format!("{expected_prefix}...")));
+    }
+
+    #[test]
     fn test_recent_events_tail_dedup() {
         let logs = "INFO: startup\n\
                     ERROR: Load failed\n\

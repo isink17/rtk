@@ -632,18 +632,17 @@ impl GrepJsonOutput {
                 out_matches.push(GrepJsonMatch { line: *line, text });
                 current_count += 1;
             }
+            }
 
             // In normal JSON mode, avoid emitting empty file entries that can be
             // created when we early-break due to a total cap.
-            if out_matches.is_empty() {
-                continue;
+            if !out_matches.is_empty() {
+                out_files.push(GrepJsonFile {
+                    path: compact_path(file),
+                    count: matches.len(),
+                    matches: out_matches,
+                });
             }
-
-            out_files.push(GrepJsonFile {
-                path: compact_path(file),
-                count: matches.len(),
-                matches: out_matches,
-            });
         }
 
         let _ = remaining_total.take();
@@ -1521,5 +1520,98 @@ c.txt\x002:foo c2\n"
         let v2: Value = serde_json::from_str(out_count_by_file.trim()).expect("valid json");
         assert_eq!(v2["pattern"], "Foo");
         assert!(v2["files"].is_array());
+    }
+
+    #[test]
+    fn test_json_total_cap_one_emits_one_match_and_non_empty_files() {
+        let stdout = concat!("b.rs\u{0}1:Foo\n", "a.rs\u{0}1:Foo\n", "a.rs\u{0}2:Foo\n");
+        let (out, _stats) = render_grep_output(
+            "Foo",
+            stdout,
+            &GrepRenderOptions {
+                max_line_chars: Some(80),
+                max_matches: Some(1),
+                max_per_file: None,
+                uncapped: false,
+                files_only: false,
+                count_by_file: false,
+                agent_safe: false,
+                summary_enabled: false,
+                context_only: false,
+            },
+            None,
+            true,
+        );
+        let v: Value = serde_json::from_str(out.trim()).expect("valid json");
+        assert_eq!(v["displayedMatches"], 1);
+        assert!(!v["files"].as_array().unwrap().is_empty());
+        let mut total_json_matches = 0usize;
+        for f in v["files"].as_array().unwrap() {
+            total_json_matches += f["matches"].as_array().unwrap().len();
+        }
+        assert_eq!(total_json_matches, 1);
+    }
+
+    #[test]
+    fn test_agent_safe_json_total_cap_does_not_emit_empty_files_when_matches_exist() {
+        let stdout = concat!("b.rs\u{0}1:Foo\n", "a.rs\u{0}1:Foo\n", "a.rs\u{0}2:Foo\n");
+        let (out, _stats) = render_grep_output(
+            "Foo",
+            stdout,
+            &GrepRenderOptions {
+                max_line_chars: Some(80),
+                max_matches: Some(1),
+                max_per_file: None,
+                uncapped: false,
+                files_only: false,
+                count_by_file: false,
+                agent_safe: true,
+                summary_enabled: true,
+                context_only: false,
+            },
+            None,
+            true,
+        );
+        let v: Value = serde_json::from_str(out.trim()).expect("valid json");
+        assert_eq!(v["displayedMatches"], 1);
+        let files = v["files"].as_array().unwrap();
+        assert!(!files.is_empty());
+        assert!(!files[0]["matches"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_json_total_and_per_file_caps_both_respected() {
+        let stdout = concat!(
+            "a.rs\u{0}1:Foo\n",
+            "a.rs\u{0}2:Foo\n",
+            "b.rs\u{0}1:Foo\n",
+            "b.rs\u{0}2:Foo\n"
+        );
+        let (out, _stats) = render_grep_output(
+            "Foo",
+            stdout,
+            &GrepRenderOptions {
+                max_line_chars: Some(80),
+                max_matches: Some(2),
+                max_per_file: Some(1),
+                uncapped: false,
+                files_only: false,
+                count_by_file: false,
+                agent_safe: false,
+                summary_enabled: false,
+                context_only: false,
+            },
+            None,
+            true,
+        );
+        let v: Value = serde_json::from_str(out.trim()).expect("valid json");
+        assert_eq!(v["displayedMatches"], 2);
+        let mut total_json_matches = 0usize;
+        for f in v["files"].as_array().unwrap() {
+            let m = f["matches"].as_array().unwrap().len();
+            assert!(m <= 1);
+            total_json_matches += m;
+        }
+        assert_eq!(total_json_matches, 2);
     }
 }
