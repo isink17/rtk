@@ -145,6 +145,11 @@ where
         if arg.contains('/') || arg.contains('\\') {
             return path_exists(arg);
         }
+        // Filename with extension (README.md) - treat as path if it exists.
+        // This is a safe middle-ground between "bare word" (main) and a ref.
+        if arg.contains('.') {
+            return path_exists(arg);
+        }
         // Bare word (no separator, no special prefix) — never inject `--`
         // This avoids misidentifying a ref/branch as a path even if a same-named
         // file happens to exist on disk.
@@ -2022,6 +2027,17 @@ mod tests {
         assert_eq!(normalize_diff_args_impl(&args, exists_mock(&[])), args);
     }
 
+    /// Baseline: `--` already present with multiple pathspecs → no-op, args unchanged.
+    #[test]
+    fn test_normalize_diff_args_noop_when_separator_present_multiple_paths() {
+        let args = vec![
+            "--".to_string(),
+            "README.md".to_string(),
+            "src/cmds/system/README.md".to_string(),
+        ];
+        assert_eq!(normalize_diff_args_impl(&args, exists_mock(&[])), args);
+    }
+
     /// Core regression (issue #1215): clap ate `--` before a real file path.
     /// When the path exists on disk, `--` must be re-inserted.
     #[test]
@@ -2056,6 +2072,13 @@ mod tests {
         );
     }
 
+    /// Ref with explicit separator before a filename-with-extension → no-op, args unchanged.
+    #[test]
+    fn test_normalize_diff_args_noop_ref_then_separator_then_filename() {
+        let args = vec!["HEAD".to_string(), "--".to_string(), "README.md".to_string()];
+        assert_eq!(normalize_diff_args_impl(&args, exists_mock(&[])), args);
+    }
+
     /// Flags before path: ["--cached", "src/foo.rs"] where src/foo.rs exists.
     #[test]
     fn test_normalize_diff_args_reinserts_separator_after_flag() {
@@ -2067,6 +2090,20 @@ mod tests {
                 "--cached".to_string(),
                 "--".to_string(),
                 "src/foo.rs".to_string()
+            ]
+        );
+    }
+
+    /// Flag then filename-with-extension pathspec → inject separator after flag.
+    #[test]
+    fn test_normalize_diff_args_inject_after_flag_for_filename_with_extension() {
+        let args = vec!["--name-only".to_string(), "README.md".to_string()];
+        assert_eq!(
+            normalize_diff_args_impl(&args, exists_mock(&["README.md"])),
+            vec![
+                "--name-only".to_string(),
+                "--".to_string(),
+                "README.md".to_string()
             ]
         );
     }
@@ -2127,6 +2164,36 @@ mod tests {
             normalize_diff_args_impl(&args, exists_mock(&["main"])),
             args,
             "bare words must never trigger -- injection even when a same-named file exists"
+        );
+    }
+
+    /// Filename with extension that exists on disk → inject `--`.
+    #[test]
+    fn test_normalize_diff_args_inject_for_filename_with_extension() {
+        let args = vec!["README.md".to_string()];
+        assert_eq!(
+            normalize_diff_args_impl(&args, exists_mock(&["README.md"])),
+            vec!["--".to_string(), "README.md".to_string()]
+        );
+    }
+
+    /// Multiple existing paths (including a filename-with-extension) → inject once before first path.
+    #[test]
+    fn test_normalize_diff_args_inject_for_multiple_existing_paths() {
+        let args = vec![
+            "README.md".to_string(),
+            "src/cmds/system/README.md".to_string(),
+        ];
+        assert_eq!(
+            normalize_diff_args_impl(
+                &args,
+                exists_mock(&["README.md", "src/cmds/system/README.md"]),
+            ),
+            vec![
+                "--".to_string(),
+                "README.md".to_string(),
+                "src/cmds/system/README.md".to_string()
+            ]
         );
     }
 
