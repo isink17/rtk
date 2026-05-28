@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://github.com/rtk-ai/rtk/actions"><img src="https://github.com/rtk-ai/rtk/workflows/Security%20Check/badge.svg" alt="CI"></a>
   <a href="https://github.com/rtk-ai/rtk/releases"><img src="https://img.shields.io/github/v/release/rtk-ai/rtk" alt="Release"></a>
-  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+  <a href="https://opensource.org/licenses/Apache-2.0"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a>
   <a href="https://discord.gg/RySmvNF5kF"><img src="https://img.shields.io/discord/1470188214710046894?label=Discord&logo=discord" alt="Discord"></a>
   <a href="https://formulae.brew.sh/formula/rtk"><img src="https://img.shields.io/homebrew/v/rtk" alt="Homebrew"></a>
 </p>
@@ -18,7 +18,7 @@
   <a href="https://www.rtk-ai.app">Website</a> &bull;
   <a href="#installation">Install</a> &bull;
   <a href="https://www.rtk-ai.app/guide/troubleshooting">Troubleshooting</a> &bull;
-  <a href="ARCHITECTURE.md">Architecture</a> &bull;
+  <a href="docs/contributing/ARCHITECTURE.md">Architecture</a> &bull;
   <a href="https://discord.gg/RySmvNF5kF">Discord</a>
 </p>
 
@@ -110,12 +110,29 @@ rtk init --agent windsurf       # Windsurf
 rtk init --agent cline          # Cline / Roo Code
 rtk init --agent kilocode       # Kilo Code
 rtk init --agent antigravity    # Google Antigravity
+rtk init --agent hermes         # Hermes
 
 # 2. Restart your AI tool, then test
 git status  # Automatically rewritten to rtk git status
 ```
 
-The hook transparently rewrites Bash commands (e.g., `git status` -> `rtk git status`) before execution. Claude never sees the rewrite, it just gets compressed output.
+Hook-based agents rewrite Bash commands (e.g., `git status` -> `rtk git status`) before execution. Plugin-based agents, including Hermes, use their plugin API to rewrite commands before execution. The agent receives compact output without needing to call `rtk` explicitly.
+
+## Grep (agent-friendly)
+
+```bash
+rtk grep "Foo" . --files-only
+rtk grep "Foo" . --count-by-file
+rtk grep "Foo" . --top-files 10
+rtk grep "Foo" . --agent-safe
+rtk grep "Foo" . --agent-safe --max-per-file 30
+rtk grep "Foo" . --json
+rtk grep "Foo" . --agent-safe --json
+rtk grep "Foo" . --all --full-lines
+
+# Opt-in preset for agents (grep only in this slice):
+RTK_AGENT_SAFE=1 rtk grep "Foo" .
+```
 
 **Important:** the hook only runs on Bash tool calls. Claude Code built-in tools like `Read`, `Grep`, and `Glob` do not pass through the Bash hook, so they are not auto-rewritten. To get RTK's compact output for those workflows, use shell commands (`cat`/`head`/`tail`, `rg`/`grep`, `find`) or call `rtk read`, `rtk grep`, or `rtk find` directly.
 
@@ -144,9 +161,15 @@ Four strategies applied per command type:
 rtk ls .                        # Token-optimized directory tree
 rtk read file.rs                # Smart file reading
 rtk read file.rs -l aggressive  # Signatures only (strips bodies)
+rtk read file.rs --lines 430:540 # Inclusive line range (1-based)
 rtk smart file.rs               # 2-line heuristic code summary
 rtk find "*.rs" .               # Compact find results
-rtk grep "pattern" .            # Grouped search results
+rtk grep "pattern" .            # Grouped search results (legacy defaults)
+rtk grep "Foo" . --files-only   # Unique matching file paths
+rtk grep "Foo" . --count-by-file # Counts per file
+rtk grep "Foo" . --agent-safe   # Token-safe preset (caps + clipping + summary)
+rtk grep "Foo" . --agent-safe --max-per-file 30
+rtk grep "Foo" . --all --full-lines # Legacy full output (uncapped + unclipped)
 rtk diff file1 file2            # Condensed diff
 ```
 
@@ -206,6 +229,26 @@ rtk bundle install              # Ruby gems (strip Using lines)
 rtk prisma generate             # Schema generation (no ASCII art)
 ```
 
+### C++ / CMake / MSBuild
+```bash
+rtk cmake --build <dir>         # Build errors only (-85%)
+rtk cmake -B <dir>              # Configure: errors + key settings only (-70%)
+rtk make [-j<N>]                # Make errors only (-80%)
+rtk ninja [-C <dir>]            # Ninja build errors only (-80%)
+rtk ctest [--test-dir dir]      # Failed tests only (-85%)
+rtk msbuild [sln] [flags]       # MSVC/LNK errors only, no project noise (-80%)
+rtk codegraph index <path>      # Summary only, no per-file progress (-90%)
+```
+
+### PowerShell
+```powershell
+Select-String -Path f -Pattern p   # auto-rewritten -> rtk grep
+Get-Content <file>                  # auto-rewritten -> rtk read
+GC <file>                           # auto-rewritten -> rtk read
+rtk read <file> --lines 430:540     # Prefer over Get-Content line-range loops
+Remove-Item <path> -Force           # -> ok <basename>
+```
+
 ### AWS
 ```bash
 rtk aws sts get-caller-identity # One-line identity
@@ -235,6 +278,7 @@ rtk json config.json            # Structure without values
 rtk deps                        # Dependencies summary
 rtk env -f AWS                  # Filtered env vars
 rtk log app.log                 # Deduplicated logs
+rtk log ERRORLOG.TXT --events 20 # Tail key error/assert events (deduped)
 rtk curl <url>                  # Truncate + save full output
 rtk wget <url>                  # Download, strip progress bars
 rtk summary <long command>      # Heuristic summary
@@ -311,6 +355,22 @@ rtk init --show             # Verify installation
 
 After install, **restart Claude Code**.
 
+### Commands Rewritten
+
+Selected entries (full set covered by the hook):
+
+| Raw Command | Rewritten To |
+|---|---|
+| `cmake --build / cmake -B` | `rtk cmake ...` |
+| `ctest` | `rtk ctest` |
+| `make` (non-lifecycle targets) | `rtk make` |
+| `ninja` | `rtk ninja` |
+| `msbuild` | `rtk msbuild` |
+| `codegraph index/update/search/...` | `rtk codegraph ...` |
+| `Select-String -Path f -Pattern p` | `rtk grep p f` |
+| `Get-Content / GC` | `rtk read` |
+| `Remove-Item` | `rtk remove-item` |
+
 ## Windows
 
 RTK works on Windows with some limitations. The auto-rewrite hook (`rtk-rewrite.sh`) requires a Unix shell, so on native Windows RTK falls back to **CLAUDE.md injection mode** — your AI assistant receives RTK instructions but commands are not rewritten automatically.
@@ -350,7 +410,7 @@ rtk git status
 
 ## Supported AI Tools
 
-RTK supports 12 AI coding tools. Each integration transparently rewrites shell commands to `rtk` equivalents for 60-90% token savings.
+RTK supports 13 AI coding tools. Each integration rewrites shell commands to `rtk` equivalents for 60-90% token savings where the agent supports command interception.
 
 | Tool | Install | Method |
 |------|---------|--------|
@@ -364,11 +424,12 @@ RTK supports 12 AI coding tools. Each integration transparently rewrites shell c
 | **Cline / Roo Code** | `rtk init --agent cline` | .clinerules (project-scoped) |
 | **OpenCode** | `rtk init -g --opencode` | Plugin TS (tool.execute.before) |
 | **OpenClaw** | `openclaw plugins install ./openclaw` | Plugin TS (before_tool_call) |
+| **Hermes** | `rtk init --agent hermes` | Python plugin adapter (terminal command mutation via `rtk rewrite`) |
 | **Mistral Vibe** | Planned ([#800](https://github.com/rtk-ai/rtk/issues/800)) | Blocked on upstream |
 | **Kilo Code** | `rtk init --agent kilocode` | .kilocode/rules/rtk-rules.md (project-scoped) |
 | **Google Antigravity** | `rtk init --agent antigravity` | .agents/rules/antigravity-rtk-rules.md (project-scoped) |
 
-For per-agent setup details, override controls, and graceful degradation, see the [Supported Agents guide](https://www.rtk-ai.app/guide/getting-started/supported-agents).
+For per-agent setup details, override controls, and graceful degradation, see the [Supported Agents guide](https://www.rtk-ai.app/guide/getting-started/supported-agents). The Hermes plugin source and tests live in `hooks/hermes/`; installed Hermes runtime files still live under `~/.hermes/plugins/rtk-rewrite/`.
 
 ## Configuration
 
@@ -404,7 +465,7 @@ brew uninstall rtk           # If installed via Homebrew
 
 - **[rtk-ai.app/guide](https://www.rtk-ai.app/guide)** — full user guide (installation, supported agents, what gets optimized, analytics, configuration, troubleshooting)
 - **[INSTALL.md](INSTALL.md)** — detailed installation reference
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** — system design and technical decisions
+- **[ARCHITECTURE.md](docs/contributing/ARCHITECTURE.md)** — system design and technical decisions
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — contribution guide
 - **[SECURITY.md](SECURITY.md)** — security policy
 
@@ -481,7 +542,7 @@ Join the community on [Discord](https://discord.gg/RySmvNF5kF).
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+Apache License 2.0 - see [LICENSE](LICENSE) for details.
 
 ## Disclaimer
 

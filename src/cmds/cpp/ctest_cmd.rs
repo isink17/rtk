@@ -1,25 +1,23 @@
-//! Filters ctest output to keep GoogleTest failures and final summaries.
+//! Filters ctest output — keep GoogleTest failures and final summaries.
 
-use crate::core::runner;
+use crate::core::runner::{self, RunOptions};
 use crate::core::utils::resolved_command;
 use anyhow::Result;
 
 pub fn run(args: &[String], verbose: u8) -> Result<i32> {
     let mut cmd = resolved_command("ctest");
-    for arg in args {
-        cmd.arg(arg);
+    for a in args {
+        cmd.arg(a);
     }
-
     if verbose > 0 {
         eprintln!("Running: ctest {}", args.join(" "));
     }
-
     runner::run_filtered(
         cmd,
         "ctest",
         &args.join(" "),
         filter_ctest_output,
-        runner::RunOptions::default().tee("ctest"),
+        RunOptions::with_tee("ctest"),
     )
 }
 
@@ -35,20 +33,17 @@ pub(crate) fn filter_ctest_output(output: &str) -> String {
         let m = normalize_ctest_verbose_prefix(t);
 
         if t.is_empty() {
-            // Keep spacing inside a failure block (assert details often rely on it),
-            // but avoid extra blank lines otherwise.
             if emitting_failure_block {
                 out.push(String::new());
             }
             continue;
         }
 
-        // GoogleTest markers
         if let Some(name) = parse_gtest_run(m) {
             current_test = Some(name);
             emitting_failure_block = false;
             emitted_test_header_for_block = false;
-            continue; // drop passing run spam; failures will re-introduce name on first Failure line
+            continue;
         }
 
         if is_gtest_ok(m) {
@@ -58,7 +53,6 @@ pub(crate) fn filter_ctest_output(output: &str) -> String {
             continue;
         }
 
-        // Start/continue a failure block when we see ": Failure" (GoogleTest failure header).
         if is_gtest_failure_header(m) {
             if !emitted_test_header_for_block {
                 if let Some(name) = current_test.as_deref() {
@@ -71,7 +65,6 @@ pub(crate) fn filter_ctest_output(output: &str) -> String {
             continue;
         }
 
-        // Preserve gtest failed summary/listing blocks.
         if is_gtest_failed_summary_line(m) {
             emitting_failure_block = false;
             emitted_test_header_for_block = false;
@@ -79,7 +72,6 @@ pub(crate) fn filter_ctest_output(output: &str) -> String {
             continue;
         }
 
-        // Preserve ctest summaries.
         if is_ctest_summary_line(m) {
             emitting_failure_block = false;
             emitted_test_header_for_block = false;
@@ -87,15 +79,12 @@ pub(crate) fn filter_ctest_output(output: &str) -> String {
             continue;
         }
 
-        // Preserve important non-gtest crash/error lines.
         if is_important_non_gtest_line(m) {
             out.push(trimmed.to_string());
             continue;
         }
 
-        // Keep assertion details / stack traces while inside a failure block.
         if emitting_failure_block {
-            // Stop the block when we reach the gtest failure terminator for the test.
             if is_gtest_failed_test_line(m) {
                 out.push(trimmed.to_string());
                 emitting_failure_block = false;
@@ -104,7 +93,6 @@ pub(crate) fn filter_ctest_output(output: &str) -> String {
                 continue;
             }
 
-            // Drop noisy separators even inside failure blocks.
             if is_noisy_separator(m) {
                 continue;
             }
@@ -117,7 +105,6 @@ pub(crate) fn filter_ctest_output(output: &str) -> String {
 }
 
 fn normalize_ctest_verbose_prefix(line: &str) -> &str {
-    // ctest -V commonly prefixes child output lines as: "1: <line>"
     let s = line.trim_start();
     let mut i = 0;
     for (idx, ch) in s.char_indices() {
@@ -145,8 +132,6 @@ fn normalize_ctest_verbose_prefix(line: &str) -> &str {
 }
 
 fn parse_gtest_run(line: &str) -> Option<String> {
-    // Example: "[ RUN      ] FooTest/0.DoesThing"
-    // Example: "[ RUN      ] FooSuite/BarTest.DoesThing/1"
     if !line.starts_with("[ RUN") {
         return None;
     }
@@ -164,20 +149,14 @@ fn is_gtest_ok(line: &str) -> bool {
 }
 
 fn is_gtest_failure_header(line: &str) -> bool {
-    // Typical: "/path/foo_test.cc:42: Failure"
     line.ends_with(": Failure")
 }
 
 fn is_gtest_failed_test_line(line: &str) -> bool {
-    // Typical: "[  FAILED  ] Foo.Fail (0 ms)"
     line.starts_with("[  FAILED  ]") && line.contains('(')
 }
 
 fn is_gtest_failed_summary_line(line: &str) -> bool {
-    // Summary/listing:
-    // "[  FAILED  ] 1 test, listed below:"
-    // "[  FAILED  ] Foo.Fail"
-    // "[  PASSED  ] 2 tests."
     if line.starts_with("[  FAILED  ]") {
         return true;
     }
@@ -216,7 +195,6 @@ fn is_noisy_separator(line: &str) -> bool {
 }
 
 fn compact_lines(mut lines: Vec<String>) -> Vec<String> {
-    // Trim leading/trailing empties, collapse multiple blank lines.
     while lines.first().is_some_and(|l| l.trim().is_empty()) {
         lines.remove(0);
     }
@@ -244,8 +222,7 @@ fn compact_lines(mut lines: Vec<String>) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::filter_ctest_output;
-    use super::normalize_ctest_verbose_prefix;
+    use super::*;
 
     #[test]
     fn gtest_all_passed_compacts() {

@@ -1,6 +1,7 @@
 //! Deduplicates repeated log lines and shows counts instead.
 
 use crate::core::tracking;
+use crate::core::truncate::{reduced, CAP_WARNINGS};
 use anyhow::Result;
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -21,7 +22,7 @@ lazy_static! {
 }
 
 /// Filter and deduplicate log output
-pub fn run_file(file: &Path, verbose: u8) -> Result<()> {
+pub fn run_file(file: &Path, recent_events: usize, keywords: &[String], verbose: u8) -> Result<()> {
     let timer = tracking::TimedExecution::start();
 
     if verbose > 0 {
@@ -29,7 +30,7 @@ pub fn run_file(file: &Path, verbose: u8) -> Result<()> {
     }
 
     let content = fs::read_to_string(file)?;
-    let result = analyze_logs(&content);
+    let result = analyze_logs_with_options(&content, recent_events, keywords);
     println!("{}", result);
     timer.track(
         &format!("cat {}", file.display()),
@@ -41,7 +42,7 @@ pub fn run_file(file: &Path, verbose: u8) -> Result<()> {
 }
 
 /// Filter logs from stdin
-pub fn run_stdin(_verbose: u8) -> Result<()> {
+pub fn run_stdin(recent_events: usize, keywords: &[String], _verbose: u8) -> Result<()> {
     let timer = tracking::TimedExecution::start();
 
     let mut content = String::new();
@@ -51,7 +52,7 @@ pub fn run_stdin(_verbose: u8) -> Result<()> {
         content.push('\n');
     }
 
-    let result = analyze_logs(&content);
+    let result = analyze_logs_with_options(&content, recent_events, keywords);
     println!("{}", result);
 
     timer.track("log (stdin)", "rtk log (stdin)", &content, &result);
@@ -81,17 +82,24 @@ fn analyze_logs(content: &str) -> String {
         let normalized =
             normalize_log_line(line, &TIMESTAMP_RE, &UUID_RE, &HEX_RE, &NUM_RE, &PATH_RE);
 
-        // Categorize
+        // Categorize. The error bucket also covers severity labels above ERROR
+        // (CRITICAL, FATAL, ALERT, EMERGENCY, SEVERE, PANIC) — these are the most
+        // important lines in a log and were previously dropped as noise when they
+        // didn't literally contain "error".
         if line_lower.contains("error")
             || line_lower.contains("fatal")
             || line_lower.contains("panic")
+            || line_lower.contains("critical")
+            || line_lower.contains("alert")
+            || line_lower.contains("emerg")
+            || line_lower.contains("severe")
         {
             let count = error_counts.entry(normalized.clone()).or_insert(0);
             if *count == 0 {
                 unique_errors.push(line.to_string());
             }
             *count += 1;
-        } else if line_lower.contains("warn") {
+        } else if line_lower.contains("warn") || line_lower.contains("notice") {
             let count = warn_counts.entry(normalized.clone()).or_insert(0);
             if *count == 0 {
                 unique_warnings.push(line.to_string());
@@ -129,7 +137,8 @@ fn analyze_logs(content: &str) -> String {
         let mut error_list: Vec<_> = error_counts.iter().collect();
         error_list.sort_by(|a, b| b.1.cmp(a.1));
 
-        for (normalized, count) in error_list.iter().take(10) {
+        const MAX_LOG_ERRORS: usize = CAP_WARNINGS;
+        for (normalized, count) in error_list.iter().take(MAX_LOG_ERRORS) {
             // Find original message
             let original = unique_errors
                 .iter()
@@ -154,10 +163,10 @@ fn analyze_logs(content: &str) -> String {
             }
         }
 
-        if error_list.len() > 10 {
+        if error_list.len() > MAX_LOG_ERRORS {
             result.push(format!(
                 "   ... +{} more unique errors",
-                error_list.len() - 10
+                error_list.len() - MAX_LOG_ERRORS
             ));
         }
         result.push(String::new());
@@ -170,7 +179,9 @@ fn analyze_logs(content: &str) -> String {
         let mut warn_list: Vec<_> = warn_counts.iter().collect();
         warn_list.sort_by(|a, b| b.1.cmp(a.1));
 
-        for (normalized, count) in warn_list.iter().take(5) {
+        // warnings are lower severity than errors — show fewer.
+        const MAX_LOG_WARNS: usize = reduced(CAP_WARNINGS, 5);
+        for (normalized, count) in warn_list.iter().take(MAX_LOG_WARNS) {
             let original = unique_warnings
                 .iter()
                 .find(|w| {
@@ -194,15 +205,84 @@ fn analyze_logs(content: &str) -> String {
             }
         }
 
-        if warn_list.len() > 5 {
+        if warn_list.len() > MAX_LOG_WARNS {
             result.push(format!(
                 "   ... +{} more unique warnings",
-                warn_list.len() - 5
+                warn_list.len() - MAX_LOG_WARNS
             ));
         }
     }
 
     result.join("\n")
+}
+
+fn analyze_logs_with_options(content: &str, recent_events: usize, keywords: &[String]) -> String {
+    let mut base = analyze_logs(content);
+    if recent_events == 0 {
+        return base;
+    }
+
+    let keys: Vec<String> = if keywords.is_empty() {
+        vec![
+            "assert",
+            "error",
+            "failed",
+            "fail",
+            "exception",
+            "crash",
+            "load",
+            "oninitialize",
+            "onpostinitialize",
+            "streamread",
+        ]
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect()
+    } else {
+        keywords.iter().map(|s| s.to_ascii_lowercase()).collect()
+    };
+
+    let mut picked: Vec<(usize, String)> = Vec::new();
+    let mut seen_norm: Vec<String> = Vec::new();
+
+    let lines: Vec<&str> = content.lines().collect();
+    for idx0 in (0..lines.len()).rev() {
+        let l = lines[idx0].trim_end();
+        if l.is_empty() {
+            continue;
+        }
+        let lower = l.to_ascii_lowercase();
+        if !keys.iter().any(|k| lower.contains(k)) {
+            continue;
+        }
+
+        let norm = normalize_log_line(l, &TIMESTAMP_RE, &UUID_RE, &HEX_RE, &NUM_RE, &PATH_RE);
+        if seen_norm.contains(&norm) {
+            continue;
+        }
+        seen_norm.push(norm);
+        picked.push((idx0 + 1, l.to_string()));
+        if picked.len() >= recent_events {
+            break;
+        }
+    }
+
+    picked.reverse();
+
+    if !picked.is_empty() {
+        base.push_str("\n\n[RECENT_EVENTS]\n");
+        for (ln, msg) in picked {
+            let truncated = if msg.len() > 200 {
+                let t: String = msg.chars().take(197).collect();
+                format!("{}...", t)
+            } else {
+                msg
+            };
+            base.push_str(&format!("  {}: {}\n", ln, truncated));
+        }
+    }
+
+    base.trim_end().to_string()
 }
 
 fn normalize_log_line(
@@ -240,6 +320,18 @@ mod tests {
     }
 
     #[test]
+    fn test_analyze_logs_extended_severity_keywords() {
+        let logs = "2024-01-01 10:00:00 CRITICAL: disk full\n\
+                    2024-01-01 10:00:01 ALERT: memory pressure\n\
+                    2024-01-01 10:00:02 emerg: system shutdown imminent\n\
+                    2024-01-01 10:00:03 SEVERE: data corruption detected\n\
+                    2024-01-01 10:00:04 notice: config reloaded\n";
+        let result = analyze_logs(logs);
+        assert!(result.contains("ERRORS"), "critical/alert/emerg/severe should count as errors");
+        assert!(result.contains("WARNINGS"), "notice should count as warning");
+    }
+
+    #[test]
     fn test_analyze_logs_multibyte() {
         let logs = format!(
             "2024-01-01 10:00:00 ERROR: {} connection failed\n\
@@ -269,5 +361,20 @@ mod tests {
         let result = analyze_logs(&logs);
         let expected_prefix: String = line.chars().take(97).collect();
         assert!(result.contains(&format!("{expected_prefix}...")));
+    }
+
+    #[test]
+    fn test_recent_events_tail_dedup() {
+        let logs = "INFO: startup\n\
+                    ERROR: Load failed\n\
+                    ERROR: Load failed\n\
+                    OnInitialize: begin\n\
+                    ASSERT failed: x\n";
+        let out = analyze_logs_with_options(logs, 3, &[]);
+        assert!(out.contains("[RECENT_EVENTS]"));
+        assert!(out.contains("ERROR: Load failed"));
+        assert!(out.contains("ASSERT failed"));
+        // Dedup identical ERROR line in recent events
+        assert_eq!(out.matches("ERROR: Load failed").count(), 2); // one in summary, one in recent events
     }
 }

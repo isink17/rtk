@@ -1,10 +1,12 @@
 //! Command filter modules organized by language ecosystem.
 
 pub mod cloud;
+pub mod cpp;
 pub mod dotnet;
 pub mod git;
 pub mod go;
 pub mod js;
+pub mod jvm;
 pub mod python;
 pub mod ruby;
 pub mod rust;
