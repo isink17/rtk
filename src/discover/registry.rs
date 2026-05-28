@@ -426,10 +426,6 @@ pub fn cmd_has_rtk_disabled_prefix(cmd: &str) -> bool {
     prefix_contains_rtk_disabled(prefix_part)
 }
 
-pub fn has_rtk_disabled_prefix(cmd: &str) -> bool {
-    cmd_has_rtk_disabled_prefix(cmd)
-}
-
 /// Strip RTK_DISABLED=X and other env prefixes, returns `(env_prefix, actual_command)`.
 pub fn strip_disabled_prefix(cmd: &str) -> (&str, &str) {
     let trimmed = cmd.trim();
