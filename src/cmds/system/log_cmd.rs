@@ -140,7 +140,7 @@ fn analyze_logs(content: &str) -> String {
                 .map(|s| s.as_str())
                 .unwrap_or(normalized);
 
-            let truncated = if original.len() > 100 {
+            let truncated = if original.chars().count() > 100 {
                 let t: String = original.chars().take(97).collect();
                 format!("{}...", t)
             } else {
@@ -180,7 +180,7 @@ fn analyze_logs(content: &str) -> String {
                 .map(|s| s.as_str())
                 .unwrap_or(normalized);
 
-            let truncated = if original.len() > 100 {
+            let truncated = if original.chars().count() > 100 {
                 let t: String = original.chars().take(97).collect();
                 format!("{}...", t)
             } else {
@@ -250,5 +250,24 @@ mod tests {
         let result = analyze_logs(&logs);
         // Should not panic even with very long multi-byte messages
         assert!(result.contains("ERRORS"));
+    }
+
+    #[test]
+    fn test_analyze_logs_does_not_truncate_when_under_char_limit_but_over_byte_limit() {
+        let msg = "界".repeat(70); // keep total line <= 100 chars, but >100 bytes
+        let line = format!("2024-01-01 10:00:00 ERROR: {msg}");
+        let logs = format!("{line}\n");
+        let result = analyze_logs(&logs);
+        assert!(result.contains(&line));
+    }
+
+    #[test]
+    fn test_analyze_logs_truncates_when_over_char_limit() {
+        let msg = "a".repeat(101);
+        let line = format!("2024-01-01 10:00:00 ERROR: {msg}");
+        let logs = format!("{line}\n");
+        let result = analyze_logs(&logs);
+        let expected_prefix: String = line.chars().take(97).collect();
+        assert!(result.contains(&format!("{expected_prefix}...")));
     }
 }
