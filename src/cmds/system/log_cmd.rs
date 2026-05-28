@@ -149,7 +149,7 @@ fn analyze_logs(content: &str) -> String {
                 .map(|s| s.as_str())
                 .unwrap_or(normalized);
 
-            let truncated = if original.len() > 100 {
+            let truncated = if original.chars().count() > 100 {
                 let t: String = original.chars().take(97).collect();
                 format!("{}...", t)
             } else {
@@ -191,7 +191,7 @@ fn analyze_logs(content: &str) -> String {
                 .map(|s| s.as_str())
                 .unwrap_or(normalized);
 
-            let truncated = if original.len() > 100 {
+            let truncated = if original.chars().count() > 100 {
                 let t: String = original.chars().take(97).collect();
                 format!("{}...", t)
             } else {
@@ -272,7 +272,7 @@ fn analyze_logs_with_options(content: &str, recent_events: usize, keywords: &[St
     if !picked.is_empty() {
         base.push_str("\n\n[RECENT_EVENTS]\n");
         for (ln, msg) in picked {
-            let truncated = if msg.len() > 200 {
+            let truncated = if msg.chars().count() > 200 {
                 let t: String = msg.chars().take(197).collect();
                 format!("{}...", t)
             } else {
@@ -357,5 +357,23 @@ mod tests {
         assert!(out.contains("ASSERT failed"));
         // Dedup identical ERROR line in recent events
         assert_eq!(out.matches("ERROR: Load failed").count(), 2); // one in summary, one in recent events
+    }
+
+    #[test]
+    fn test_truncation_does_not_use_byte_len() {
+        // 60 emojis: >100 bytes, but only 60 chars → should not truncate.
+        let msg = "🎉".repeat(60);
+        let logs = format!("2024-01-01 10:00:00 ERROR: {}\n", msg);
+        let out = analyze_logs(&logs);
+        assert!(out.contains(&msg));
+        assert!(!out.contains("..."));
+    }
+
+    #[test]
+    fn test_truncation_uses_char_count_and_appends_ellipsis() {
+        let msg = "é".repeat(101);
+        let logs = format!("2024-01-01 10:00:00 ERROR: {}\n", msg);
+        let out = analyze_logs(&logs);
+        assert!(out.contains("..."));
     }
 }

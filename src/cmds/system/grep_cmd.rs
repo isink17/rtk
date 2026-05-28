@@ -588,7 +588,7 @@ impl GrepJsonOutput {
         pattern: &str,
         total_matches: usize,
         files_matched: usize,
-        displayed_matches: usize,
+        _displayed_matches: usize,
         omitted_total: usize,
         omitted_per_file: usize,
         clipped_lines: usize,
@@ -603,17 +603,18 @@ impl GrepJsonOutput {
         files.sort_by_key(|(f, _)| *f);
 
         let mut remaining_total = effective_total;
+        let mut current_count = 0usize;
         let mut out_files: Vec<GrepJsonFile> = Vec::new();
         for (file, matches) in files {
             if let Some(total_cap) = remaining_total {
-                if displayed_matches >= total_cap {
+                if current_count >= total_cap {
                     break;
                 }
             }
             let mut out_matches: Vec<GrepJsonMatch> = Vec::new();
             for (used_in_file, (line, content)) in matches.iter().enumerate() {
                 if let Some(total_cap) = remaining_total {
-                    if out_matches.len() + displayed_matches >= total_cap {
+                    if current_count >= total_cap {
                         break;
                     }
                 }
@@ -629,6 +630,13 @@ impl GrepJsonOutput {
                     content.trim().to_string()
                 };
                 out_matches.push(GrepJsonMatch { line: *line, text });
+                current_count += 1;
+            }
+
+            // In normal JSON mode, avoid emitting empty file entries that can be
+            // created when we early-break due to a total cap.
+            if out_matches.is_empty() {
+                continue;
             }
 
             out_files.push(GrepJsonFile {
@@ -644,7 +652,7 @@ impl GrepJsonOutput {
             pattern: pattern.to_string(),
             total_matches,
             files_matched,
-            displayed_matches,
+            displayed_matches: current_count,
             omitted_total,
             omitted_per_file,
             clipped_lines,
@@ -1433,6 +1441,35 @@ c.txt\x002:foo c2\n"
         );
         let v: Value = serde_json::from_str(out.trim()).expect("valid json");
         assert_eq!(v["pattern"], "Foo");
+    }
+
+    #[test]
+    fn test_json_output_total_cap_does_not_emit_empty_files() {
+        let stdout = concat!(
+            "b.rs\u{0}1:Foo b\n",
+            "a.rs\u{0}1:Foo a\n",
+            "a.rs\u{0}2:Foo a2\n"
+        );
+        let (out, _stats) = render_grep_output(
+            "Foo",
+            stdout,
+            &GrepRenderOptions {
+                max_line_chars: Some(80),
+                max_matches: Some(1),
+                max_per_file: Some(25),
+                uncapped: false,
+                files_only: false,
+                count_by_file: false,
+                agent_safe: true,
+                summary_enabled: true,
+                context_only: false,
+            },
+            None,
+            true,
+        );
+        let v: Value = serde_json::from_str(out.trim()).expect("valid json");
+        assert_eq!(v["files"].as_array().unwrap().len(), 1);
+        assert_eq!(v["files"][0]["matches"].as_array().unwrap().len(), 1);
     }
 
     #[test]
