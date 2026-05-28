@@ -134,6 +134,20 @@ rtk grep "Foo" . --all --full-lines
 RTK_AGENT_SAFE=1 rtk grep "Foo" .
 ```
 
+Notes:
+- `--files-only`: locator mode (paths only)
+- `--count-by-file`: counts per file
+- `--top-files N`: ranked file summary (top N files)
+- `--agent-safe`: caps match spam + adds summary/hints (flags override env/config)
+- `--json`: machine-readable JSON only (no human text)
+- `--all`: disables match caps
+- `--full-lines`: disables line clipping
+
+PowerShell:
+```powershell
+$env:RTK_AGENT_SAFE="1"; rtk grep "Foo" src
+```
+
 **Important:** the hook only runs on Bash tool calls. Claude Code built-in tools like `Read`, `Grep`, and `Glob` do not pass through the Bash hook, so they are not auto-rewritten. To get RTK's compact output for those workflows, use shell commands (`cat`/`head`/`tail`, `rg`/`grep`, `find`) or call `rtk read`, `rtk grep`, or `rtk find` directly.
 
 ## How It Works

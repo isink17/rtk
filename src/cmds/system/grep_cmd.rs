@@ -602,18 +602,17 @@ impl GrepJsonOutput {
         let mut files: Vec<(&String, &Vec<(usize, &str)>)> = by_file_raw.iter().collect();
         files.sort_by_key(|(f, _)| *f);
 
-        let mut remaining_total = effective_total;
         let mut current_count = 0usize;
         let mut out_files: Vec<GrepJsonFile> = Vec::new();
         for (file, matches) in files {
-            if let Some(total_cap) = remaining_total {
+            if let Some(total_cap) = effective_total {
                 if current_count >= total_cap {
                     break;
                 }
             }
             let mut out_matches: Vec<GrepJsonMatch> = Vec::new();
             for (used_in_file, (line, content)) in matches.iter().enumerate() {
-                if let Some(total_cap) = remaining_total {
+                if let Some(total_cap) = effective_total {
                     if current_count >= total_cap {
                         break;
                     }
@@ -632,7 +631,6 @@ impl GrepJsonOutput {
                 out_matches.push(GrepJsonMatch { line: *line, text });
                 current_count += 1;
             }
-            }
 
             // In normal JSON mode, avoid emitting empty file entries that can be
             // created when we early-break due to a total cap.
@@ -644,8 +642,6 @@ impl GrepJsonOutput {
                 });
             }
         }
-
-        let _ = remaining_total.take();
 
         Self {
             pattern: pattern.to_string(),
