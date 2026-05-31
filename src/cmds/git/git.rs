@@ -176,7 +176,7 @@ fn run_diff(
     let timer = tracking::TimedExecution::start();
 
     // Re-insert `--` when clap's trailing_var_arg consumed it (issue #1215)
-    let args = &args_utils::restore_double_dash(args);
+    let args = normalize_diff_args(&args_utils::restore_double_dash(args));
 
     // Check if user wants stat output
     let wants_stat = args
@@ -190,7 +190,7 @@ fn run_diff(
         // User wants stat or explicitly no compacting - pass through directly
         let mut cmd = git_cmd(global_args);
         cmd.arg("diff");
-        for arg in args {
+        for arg in &args {
             if arg == "--no-compact" {
                 continue; // RTK flag, not a git flag
             }
@@ -220,7 +220,7 @@ fn run_diff(
     let mut cmd = git_cmd(global_args);
     cmd.arg("diff").arg("--stat");
 
-    for arg in args {
+    for arg in &args {
         cmd.arg(arg);
     }
 
@@ -249,7 +249,7 @@ fn run_diff(
     // Now get actual diff but compact it
     let mut diff_cmd = git_cmd(global_args);
     diff_cmd.arg("diff");
-    for arg in args {
+    for arg in &args {
         diff_cmd.arg(arg);
     }
 
