@@ -185,7 +185,7 @@ rtk grep "Foo" . --count-by-file # Counts per file
 rtk grep "Foo" . --agent-safe   # Token-safe preset (caps + clipping + summary)
 rtk grep "Foo" . --agent-safe --max-per-file 30
 rtk grep "Foo" . --all --full-lines # Legacy full output (uncapped + unclipped)
-rtk diff file1 file2            # Condensed diff
+rtk diff file1 file2            # Condensed diff (exit 1 if files differ)
 ```
 
 ### Git
@@ -285,6 +285,9 @@ rtk docker compose ps           # Compose services
 rtk kubectl pods                # Compact pod list
 rtk kubectl logs <pod>          # Deduplicated logs
 rtk kubectl services            # Compact service list
+rtk oc get pods                 # OpenShift pod summary
+rtk oc get services             # OpenShift service list
+rtk oc logs <pod>               # Deduplicated logs
 ```
 
 ### Data & Analytics

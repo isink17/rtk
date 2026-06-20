@@ -528,6 +528,12 @@ enum Commands {
         command: KubectlCommands,
     },
 
+    /// OpenShift oc commands with compact output
+    Oc {
+        #[command(subcommand)]
+        command: OcCommands,
+    },
+
     /// Run command and show heuristic summary
     Summary {
         /// Command to run and summarize
@@ -1321,6 +1327,19 @@ enum ComposeCommands {
         service: Option<String>,
     },
     /// Passthrough: runs any unsupported compose subcommand directly
+    #[command(external_subcommand)]
+    Other(Vec<OsString>),
+}
+
+#[derive(Debug, Subcommand)]
+enum OcCommands {
+    /// Get OpenShift resources (compact for pods/services)
+    Get {
+        /// oc get arguments
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Passthrough: runs any unsupported oc subcommand directly
     #[command(external_subcommand)]
     Other(Vec<OsString>),
 }
@@ -2258,6 +2277,11 @@ fn run_cli() -> Result<i32> {
                 container::run(container::ContainerCmd::KubectlLogs, &args, cli.verbose)?
             }
             KubectlCommands::Other(args) => container::run_kubectl_passthrough(&args, cli.verbose)?,
+        },
+
+        Commands::Oc { command } => match command {
+            OcCommands::Get { args } => container::run_oc_get(&args, cli.verbose)?,
+            OcCommands::Other(args) => container::run_oc_passthrough(&args, cli.verbose)?,
         },
 
         Commands::Summary { command } => {

@@ -1151,22 +1151,12 @@ a.txt\x002:foo y\n";
 
     #[test]
     fn test_rg_no_ignore_vcs_flag_accepted() {
-        // Verify rg accepts --no-ignore-vcs (used to match grep -r behavior for .gitignore)
         let mut cmd = resolved_command("rg");
-        cmd.args([
-            "-n",
-            "--no-heading",
-            "--no-ignore-vcs",
-            "NONEXISTENT_PATTERN_12345",
-            ".",
-        ]);
+        cmd.arg("--help");
         if let Ok(output) = cmd.output() {
-            assert!(
-                output.status.code() == Some(1) || output.status.success(),
-                "rg --no-ignore-vcs should be accepted"
-            );
+            let help = String::from_utf8_lossy(&output.stdout);
+            assert!(help.contains("--no-ignore-vcs"), "rg --help should document --no-ignore-vcs");
         }
-        // If rg is not installed, skip gracefully (test still passes)
     }
 
     fn sample_stdout() -> &'static str {
