@@ -4893,6 +4893,7 @@ fn run_copilot_at(base: &Path, ctx: InitContext) -> Result<()> {
 }
 
 /// Entry point for `rtk init --uninstall --copilot` (project-scoped, like install).
+#[allow(dead_code)]
 pub fn uninstall_copilot(ctx: InitContext) -> Result<()> {
     let InitContext { dry_run, .. } = ctx;
     let removed = uninstall_copilot_at(Path::new("."), ctx)?;
@@ -4921,6 +4922,7 @@ pub fn uninstall_copilot(ctx: InitContext) -> Result<()> {
 }
 
 /// Same as [`uninstall_copilot`] but operates relative to an explicit base path.
+#[allow(dead_code)]
 fn uninstall_copilot_at(base: &Path, ctx: InitContext) -> Result<Vec<String>> {
     let InitContext { dry_run, .. } = ctx;
     let github_dir = base.join(GITHUB_DIR);
@@ -4977,11 +4979,13 @@ pub(crate) fn copilot_user_dir() -> Result<PathBuf> {
     Ok(home.join(COPILOT_USER_DIR))
 }
 
+#[allow(dead_code)]
 pub fn run_copilot_global(ctx: InitContext) -> Result<()> {
     let copilot_dir = copilot_user_dir()?;
     run_copilot_global_at(&copilot_dir, ctx)
 }
 
+#[allow(dead_code)]
 fn run_copilot_global_at(copilot_dir: &Path, ctx: InitContext) -> Result<()> {
     let InitContext { dry_run, .. } = ctx;
     let hooks_dir = copilot_dir.join(HOOKS_SUBDIR);
@@ -5021,6 +5025,7 @@ fn run_copilot_global_at(copilot_dir: &Path, ctx: InitContext) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn uninstall_copilot_global(ctx: InitContext) -> Result<()> {
     let copilot_dir = copilot_user_dir()?;
     let InitContext { dry_run, .. } = ctx;
@@ -5049,6 +5054,7 @@ pub fn uninstall_copilot_global(ctx: InitContext) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn uninstall_copilot_global_at(copilot_dir: &Path, ctx: InitContext) -> Result<Vec<String>> {
     let InitContext { dry_run, .. } = ctx;
     let hook_path = copilot_dir.join(HOOKS_SUBDIR).join(COPILOT_HOOK_FILE);
